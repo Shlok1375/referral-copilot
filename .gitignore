@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+client/dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Generated types
+shared/appkit-types/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+.smoke-test/
+test-results/
+playwright-report/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Databricks
+.databricks/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Claude
+.claude/settings.local.json
