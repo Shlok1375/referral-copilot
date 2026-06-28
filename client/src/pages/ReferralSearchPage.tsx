@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   Card,
   CardContent,
@@ -9,6 +9,7 @@ import {
   Skeleton,
 } from '@databricks/appkit-ui/react';
 import { Search, MapPin, Phone, Bookmark, BookmarkCheck, AlertTriangle, ChevronDown, ChevronUp, X, Trash2 } from 'lucide-react';
+import { useFetchJson } from '../hooks/useFetchJson';
 
 interface SearchResult {
   unique_id: string;
@@ -37,7 +38,7 @@ interface SearchResponse {
 }
 
 interface ShortlistItem {
-  id: string;
+  id: number;
   facility_id: string;
   facility_name: string;
   facility_city: string | null;
@@ -47,23 +48,6 @@ interface ShortlistItem {
   distance_km: number | null;
   match_score: number;
   saved_at: string;
-}
-
-const STORAGE_KEY = 'referral_copilot_shortlist';
-
-function loadFromStorage(): ShortlistItem[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as ShortlistItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveToStorage(items: ShortlistItem[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
 function ScoreBadge({ score }: { score: number }) {
@@ -127,22 +111,28 @@ function ResultCard({
   onRemove,
 }: {
   result: SearchResult;
-  shortlistId: string | undefined;
-  onSave: (result: SearchResult, note: string) => void;
-  onRemove: (id: string) => void;
+  shortlistId: number | undefined;
+  onSave: (result: SearchResult, note: string) => Promise<void>;
+  onRemove: (id: number) => void;
 }) {
   const [showEvidence, setShowEvidence] = useState(false);
   const [addingNote, setAddingNote] = useState(false);
   const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const specialties = result.specialties && result.specialties !== 'null'
     ? result.specialties.split(',').slice(0, 4).map((s) => s.trim()).filter(Boolean)
     : [];
 
-  const handleSave = () => {
-    onSave(result, note);
-    setAddingNote(false);
-    setNote('');
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(result, note);
+      setAddingNote(false);
+      setNote('');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -251,15 +241,17 @@ function ResultCard({
               <div className="flex gap-2">
                 <Button
                   size="sm"
-                  onClick={handleSave}
+                  onClick={() => void handleSave()}
+                  disabled={saving}
                   className="bg-[#FF3621] hover:bg-[#FF3621]/90 text-white h-7 text-xs"
                 >
-                  Save
+                  {saving ? 'Saving…' : 'Save'}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => { setAddingNote(false); setNote(''); }}
+                  disabled={saving}
                   className="h-7 text-xs"
                 >
                   Cancel
@@ -287,7 +279,7 @@ function ShortlistSection({
   onRemove,
 }: {
   items: ShortlistItem[];
-  onRemove: (id: string) => void;
+  onRemove: (id: number) => void;
 }) {
   if (items.length === 0) {
     return (
@@ -351,12 +343,14 @@ export function ReferralSearchPage() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
 
-  const [shortlist, setShortlist] = useState<ShortlistItem[]>([]);
   const [activeTab, setActiveTab] = useState<'results' | 'shortlist'>('results');
 
-  useEffect(() => {
-    setShortlist(loadFromStorage());
-  }, []);
+  // Server is the source of truth for the shortlist; `localOverrides` lets
+  // the UI reflect a save/remove instantly without waiting on a refetch,
+  // while staying consistent if the fetched list changes underneath it.
+  const { data: fetchedShortlist, error: shortlistError } = useFetchJson<ShortlistItem[]>('/api/shortlist');
+  const [localOverrides, setLocalOverrides] = useState<ShortlistItem[] | null>(null);
+  const shortlist = useMemo(() => localOverrides ?? fetchedShortlist ?? [], [localOverrides, fetchedShortlist]);
 
   const shortlistByFacilityId = useMemo(
     () => new Map(shortlist.map((item) => [item.facility_id, item.id])),
@@ -389,33 +383,36 @@ export function ReferralSearchPage() {
     }
   }, [query]);
 
-  const handleSave = useCallback((result: SearchResult, note: string) => {
-    const item: ShortlistItem = {
-      id: `${result.unique_id}-${Date.now()}`,
-      facility_id: result.unique_id,
-      facility_name: result.name,
-      facility_city: result.address_city,
-      facility_state: result.address_stateOrRegion,
-      facility_phone: result.officialPhone,
-      note: note.trim() || null,
-      distance_km: result.distance_km,
-      match_score: result.match_score,
-      saved_at: new Date().toISOString(),
-    };
-    setShortlist((prev) => {
-      const updated = [item, ...prev.filter((i) => i.facility_id !== result.unique_id)];
-      saveToStorage(updated);
-      return updated;
+  const handleSave = useCallback(async (result: SearchResult, note: string) => {
+    const r = await fetch('/api/shortlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        facility_id: result.unique_id,
+        facility_name: result.name,
+        facility_city: result.address_city ?? undefined,
+        facility_state: result.address_stateOrRegion ?? undefined,
+        facility_phone: result.officialPhone ?? undefined,
+        note: note.trim() || undefined,
+        distance_km: result.distance_km,
+        match_score: result.match_score,
+      }),
     });
-  }, []);
+    if (!r.ok) {
+      const body = await r.json().catch(() => null) as { error?: string } | null;
+      throw new Error(body?.error ?? 'Failed to save to shortlist');
+    }
+    const created = await r.json() as ShortlistItem;
+    setLocalOverrides([created, ...shortlist.filter((i) => i.facility_id !== result.unique_id)]);
+  }, [shortlist]);
 
-  const handleRemove = useCallback((id: string) => {
-    setShortlist((prev) => {
-      const updated = prev.filter((i) => i.id !== id);
-      saveToStorage(updated);
-      return updated;
+  const handleRemove = useCallback((id: number) => {
+    setLocalOverrides(shortlist.filter((i) => i.id !== id));
+    fetch(`/api/shortlist/${id}`, { method: 'DELETE' }).catch(() => {
+      // Best-effort: if this fails, the next full reload will resync from
+      // the server. Worth a toast/retry in a future pass.
     });
-  }, []);
+  }, [shortlist]);
 
   return (
     <div className="space-y-6">
@@ -561,6 +558,11 @@ export function ReferralSearchPage() {
               {shortlist.length} saved {shortlist.length === 1 ? 'facility' : 'facilities'}
             </CardTitle>
           </div>
+          {shortlistError && (
+            <div className="text-destructive bg-destructive/10 px-4 py-3 rounded-lg text-sm">
+              Couldn&rsquo;t load your shortlist: {shortlistError}
+            </div>
+          )}
           <ShortlistSection items={shortlist} onRemove={handleRemove} />
         </>
       )}

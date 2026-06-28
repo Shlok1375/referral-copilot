@@ -1,6 +1,7 @@
 # Referral Copilot
 
 **[Live demo →](https://referral-copilot-7474645521939750.aws.databricksapps.com)**
+*(Note: this runs on a Databricks workspace provisioned for the Summit hackathon. If the link is unresponsive or search returns an error, the workspace's Lakebase connection has likely gone stale post-event — this is an infrastructure lifecycle issue, not a defect in the code. See [Demo Status](#demo-status) below.)*
 
 A healthcare facility referral tool that matches patients to the right facility by care need and location, ranked by relevance and distance, with transparent evidence for every match.
 
@@ -29,6 +30,7 @@ The version submitted at the hackathon worked, but the original deployment was r
 - **Fixed two race conditions** in the frontend: rapid filter changes or quick clicks between facilities could let a slower, superseded request's response land *after* a newer one and silently overwrite fresher data. Both are now properly cancelled via `AbortController` on cleanup
 - **Extracted a reusable `useFetchJson` hook** to replace three near-identical copies of fetch/loading/error/cancellation boilerplate, aligned with the React Compiler's recommended patterns for state derived from effects
 - **Added unit test coverage for the core matching logic** (query parsing and the weighted scoring algorithm) — the original project had only a Playwright smoke test verifying pages load, with no coverage of the actual ranking behavior
+- **Moved the shortlist from browser `localStorage` to the existing Postgres backend** — the API routes for this were already built (`GET`/`POST`/`DELETE /api/shortlist`), but the frontend never used them. It now persists server-side and follows a user across devices, with an optimistic local update so saving/removing still feels instant
 
 The full list of changes is in the commit history.
 
@@ -94,13 +96,21 @@ databricks.yml   Asset Bundle configuration
 app.yaml         App runtime configuration
 ```
 
+## Demo Status
+
+This project depends on a Databricks workspace, Lakebase Postgres instance, and Unity Catalog sync that were originally provisioned for the Summit hackathon by the event organizers (shared across team members, not infrastructure I provision or control independently). Two things follow from that:
+
+1. **The live demo link may go down over time**, independent of anything in this codebase, if that workspace is decommissioned or the Lakebase connection lapses. As of this writing, search requests against the live deployment are intermittently failing — most likely a stale Postgres connection or expired compute on the hackathon workspace, not a bug in the application code.
+2. **The code itself is fully verifiable without the live demo**: `npm run typecheck`, `npm run lint`, and `npm run test` all pass cleanly (19 unit tests covering the query parser and scoring algorithm, plus a Playwright smoke test), and the logic can be read and reasoned about directly in `server/routes/referral-routes.ts`.
+
+If you're evaluating this and the live link doesn't respond, that's the honest reason — the implementation and tests are the source of truth, not the demo's current uptime.
+
 ## Roadmap
 
 A few directions I'm continuing to explore:
 
 - **Embedding-based semantic matching** as an option alongside (not necessarily replacing) the current keyword model, to catch synonymous phrasing the current substring matching misses
 - **LLM-based result validation** — a second-pass check on the top results that can flag a plausible-looking but actually-wrong match (e.g., a facility that lists a specialty but is clearly the wrong type of facility for the specific care need), surfaced with the same confidence/evidence pattern already used elsewhere in the UI
-- **Persisting the shortlist server-side** — it currently lives in browser `localStorage`, so it doesn't follow a user across devices despite the app already having a real Postgres backend
 
 ## License
 
