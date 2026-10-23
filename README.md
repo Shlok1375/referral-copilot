@@ -45,7 +45,7 @@ The full list of changes is in the commit history.
 
 ### Why a weighted keyword model, not embeddings
 
-The honest tradeoff: a semantic/embedding-based matcher would generalize better to phrasing the keyword model can't see (e.g., matching "kidney dialysis" to a facility that only lists "renal replacement therapy"). The current approach was the right scope for a ~24-hour hackathon — it's fast, fully explainable (every match traces back to a literal substring you can show the user), and has zero inference cost. Replacing it with an embedding-based similarity score, while keeping the same evidence/missing-data UI pattern, is the most interesting open improvement — see [Roadmap](#roadmap) below.
+The honest tradeoff: a semantic/embedding-based matcher would generalize better to phrasing the keyword model can't see (e.g., matching "kidney dialysis" to a facility that only lists "renal replacement therapy"). The current approach was the right scope for a two-day hackathon — it's fast, fully explainable (every match traces back to a literal substring you can show the user), and has zero inference cost. Replacing it with an embedding-based similarity score, while keeping the same evidence/missing-data UI pattern, is the most interesting open improvement — see [Roadmap](#roadmap) below.
 
 ## Getting Started
 
